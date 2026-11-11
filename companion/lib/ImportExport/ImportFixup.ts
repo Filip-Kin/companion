@@ -182,7 +182,12 @@ export function fixupCustomFeedbackControl(
 	const result: CustomFeedbackModel = {
 		type: 'custom-feedback',
 		options: structuredClone(control.options),
-		inputs: structuredClone(control.inputs || []),
+		// Inputs of the same id would share one value from each caller, so only the first is kept
+		inputs: structuredClone(
+			(control.inputs || []).filter(
+				(input, index, inputs) => inputs.findIndex((other) => other.id === input.id) === index
+			)
+		),
 		feedbacks: fixupEntitiesRecursive(instanceIdMap, structuredClone(control.feedbacks || [])),
 		localVariables: fixupEntitiesRecursive(instanceIdMap, structuredClone(control.localVariables || [])),
 	}
