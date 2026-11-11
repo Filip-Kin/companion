@@ -3,7 +3,7 @@ import debounceFn from 'debounce-fn'
 import isEqual from 'fast-deep-equal'
 import { nanoid } from 'nanoid'
 import type { JsonValue } from 'type-fest'
-import { isCustomActionsConnectionId } from '@companion-app/shared/ConnectionId.js'
+import { isCustomActionsConnectionId, isCustomFeedbacksConnectionId } from '@companion-app/shared/ConnectionId.js'
 import {
 	CreateCustomActionControlId,
 	type CustomActionControlId,
@@ -25,6 +25,7 @@ import type {
 import type { VariablesAndExpressionParser } from '../../Variables/VariablesAndExpressionParser.js'
 import { ControlCustomAction } from '../ControlTypes/CustomAction.js'
 import { MAX_CUSTOM_ACTION_DEPTH, type CustomActionRunFrame } from '../CustomActionRunFrame.js'
+import type { CustomFeedbackInstanceManager } from '../CustomFeedbacks/CustomFeedbackInstanceManager.js'
 import type { ControlEntityInstance } from '../Entities/EntityInstance.js'
 import type { ControlEntityList } from '../Entities/EntityList.js'
 import { resolveStoreResult } from '../Entities/EntitySpecialExpressionManager.js'
@@ -39,6 +40,11 @@ export const CUSTOM_ACTION_COPY_ACTIONS_GROUP = 'custom-action-copy:actions'
 export const CUSTOM_ACTION_COPY_LOCAL_VARIABLES_GROUP = 'custom-action-copy:local-variables'
 
 export type CustomActionInstancesForEntity = Pick<CustomActionInstanceManager, 'entityUpdate' | 'entityDelete'>
+
+type CustomFeedbackInstancesForCustomActions = Pick<
+	CustomFeedbackInstanceManager,
+	'entityUpdate' | 'entityDelete' | 'evaluateLive' | 'copyRuntimeValues'
+>
 
 /**
  * The copy of a custom action held by an action which calls it
@@ -104,6 +110,8 @@ export class CustomActionInstanceManager implements VariableDependencyListener<C
 	readonly #controlStore: Pick<IControlStore, 'getControl'>
 	readonly #renderClock: RenderClock
 	readonly #variableDependencies: VariableDependencyRegistry
+	/** For any copies of custom feedbacks inside the copies */
+	readonly #customFeedbackInstances: CustomFeedbackInstancesForCustomActions
 
 	/** The copies, by the action which calls the custom action */
 	readonly #copies = new Map<ControlEntityInstance, PlacedCopy>()
@@ -119,11 +127,13 @@ export class CustomActionInstanceManager implements VariableDependencyListener<C
 	constructor(
 		controlStore: Pick<IControlStore, 'getControl'>,
 		renderClock: RenderClock,
-		variableDependencies: VariableDependencyRegistry
+		variableDependencies: VariableDependencyRegistry,
+		customFeedbackInstances: CustomFeedbackInstancesForCustomActions
 	) {
 		this.#controlStore = controlStore
 		this.#renderClock = renderClock
 		this.#variableDependencies = variableDependencies
+		this.#customFeedbackInstances = customFeedbackInstances
 	}
 
 	/**
@@ -253,6 +263,7 @@ export class CustomActionInstanceManager implements VariableDependencyListener<C
 			copy.controlId,
 			copyScope.customActionChain,
 			this,
+			this.#customFeedbackInstances,
 			this.#renderClock,
 			this.#variableDependencies,
 			{ customActionControlId: customAction.controlId, options, localValues: new Map() }
@@ -429,6 +440,7 @@ export class CustomActionInstanceManager implements VariableDependencyListener<C
 			copy.controlId,
 			[...chain, customActionControlId],
 			this,
+			this.#customFeedbackInstances,
 			this.#renderClock,
 			this.#variableDependencies,
 			{ customActionControlId, options, localValues: new Map() }
@@ -467,7 +479,9 @@ export class CustomActionInstanceManager implements VariableDependencyListener<C
 			deriveEntityIds(
 				idPrefix,
 				customAction.entities.getLocalVariableEntities().map((entity) => entity.asEntityModel(true))
-			)
+			),
+			// The other entities of the copy may use these variables, such as one fed by a connection
+			(changed) => scope.localVariableEntitiesChanged(changed)
 		)
 		scope.setEntityLists(null, localVariables)
 
@@ -478,7 +492,8 @@ export class CustomActionInstanceManager implements VariableDependencyListener<C
 			deriveEntityIds(
 				idPrefix,
 				customAction.entities.getActionEntities().map((entity) => entity.asEntityModel(true))
-			)
+			),
+			null
 		)
 		scope.setEntityLists(actions, localVariables)
 
@@ -505,6 +520,11 @@ export class CustomActionInstanceManager implements VariableDependencyListener<C
 
 			entity.copyRuntimeValuesFrom(sourceEntity)
 
+			if (isCustomFeedbacksConnectionId(entity.connectionId)) {
+				// The custom feedback this uses has its own copy, which can also start from the existing one
+				this.#customFeedbackInstances.copyRuntimeValues(entity, sourceEntity)
+				continue
+			}
 			if (!isCustomActionsConnectionId(entity.connectionId)) continue
 
 			// The custom action this calls has its own copy, which can start from the existing one if it sees the same
@@ -599,7 +619,7 @@ function getCopyLists(
 /**
  * Prefix the ids of some entities and their children, so that copies of them have their own ids
  */
-function deriveEntityIds(prefix: string, models: SomeEntityModel[]): SomeEntityModel[] {
+export function deriveEntityIds(prefix: string, models: SomeEntityModel[]): SomeEntityModel[] {
 	return models.map((model) => {
 		const children = model.children
 		return {

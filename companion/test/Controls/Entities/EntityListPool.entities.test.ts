@@ -315,9 +315,12 @@ describe('EntityListPool - entityReplaceForUpgrade', () => {
 			specialExpressionManager: { trackEntity: vi.fn(), forgetEntity: vi.fn() } as any,
 			customActionChain: [],
 			customActionInstances: { entityUpdate: vi.fn(), entityDelete: vi.fn() },
+			customFeedbackInstances: { entityUpdate: vi.fn(), entityDelete: vi.fn(), evaluateLive: vi.fn() },
 			createVariablesAndExpressionParser: vi.fn(() => ({}) as any),
 		}
-		pool.findEntityById(caller.id)!.setTransientChildGroup('copy', copyScope, { type: EntityModelType.Action }, [copy])
+		pool
+			.findEntityById(caller.id)!
+			.setTransientChildGroup('copy', copyScope, { type: EntityModelType.Action }, [copy], null)
 
 		const result = pool.entityReplaceForUpgrade({
 			id: copy.id,

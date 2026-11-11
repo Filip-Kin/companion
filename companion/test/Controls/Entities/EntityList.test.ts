@@ -56,11 +56,13 @@ function createList(
 		forgetEntity: vi.fn(),
 	} as any
 	const customActionInstances = { entityUpdate: vi.fn(), entityDelete: vi.fn() }
+	const customFeedbackInstances = { entityUpdate: vi.fn(), entityDelete: vi.fn(), evaluateLive: vi.fn() }
 	const scope: EntityScope = {
 		isTransient: false,
 		specialExpressionManager,
 		customActionChain: [],
 		customActionInstances,
+		customFeedbackInstances,
 		createVariablesAndExpressionParser: vi.fn(() => ({}) as any),
 	}
 	const internalController: InternalControllerForEntity = {
@@ -1489,7 +1491,11 @@ describe('getChildBooleanFeedbackValues', () => {
 })
 
 describe('lazy feedback evaluation (with context)', () => {
-	const booleanContext = (): FeedbackExecutionContext => ({ parser: { marker: 'the-parser' } as any })
+	const booleanContext = (): FeedbackExecutionContext => ({
+		parser: { marker: 'the-parser' } as any,
+		executionVariables: {},
+		parserOptions: {},
+	})
 
 	/** A boolean feedback list, exercised via the lazy (non-null context) read path. */
 	function createBooleanFeedbackList(showInvert = false) {
@@ -2104,6 +2110,7 @@ describe('transient child groups', () => {
 			specialExpressionManager: { trackEntity: vi.fn(), forgetEntity: vi.fn() } as any,
 			customActionChain: ['custom-action:1'],
 			customActionInstances: { entityUpdate: vi.fn(), entityDelete: vi.fn() },
+			customFeedbackInstances: { entityUpdate: vi.fn(), entityDelete: vi.fn(), evaluateLive: vi.fn() },
 			createVariablesAndExpressionParser: vi.fn(() => ({}) as any),
 		}
 	}
@@ -2115,10 +2122,13 @@ describe('transient child groups', () => {
 		res.connectionEntityUpdate.mockClear()
 
 		const transientScope = createTransientScope()
-		const group = callerEntity.setTransientChildGroup('instance', transientScope, { type: EntityModelType.Action }, [
-			transientAction,
-			transientFeedback,
-		])
+		const group = callerEntity.setTransientChildGroup(
+			'instance',
+			transientScope,
+			{ type: EntityModelType.Action },
+			[transientAction, transientFeedback],
+			null
+		)
 
 		return { ...res, callerEntity, transientScope, group }
 	}
@@ -2200,7 +2210,8 @@ describe('transient child groups', () => {
 			{
 				type: EntityModelType.Action,
 			},
-			[transientAction]
+			[transientAction],
+			null
 		)
 
 		expect(connectionEntityDelete).toHaveBeenCalledTimes(2)

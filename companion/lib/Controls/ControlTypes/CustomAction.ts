@@ -185,6 +185,7 @@ export class ControlCustomAction
 			variableDependencies: deps.variableDependencies,
 			getPageVariableEntities: deps.getPageVariableEntities,
 			customActionInstances: deps.customActionInstances,
+			customFeedbackInstances: deps.customFeedbackInstances,
 			getDefaultOptionsVariables: () => buildCustomActionOptionsVariables(this.#getDefaultOptions()),
 			localVariableRenamed: (fromName, toName) => this.#localVariableRenamed(fromName, toName),
 		})
