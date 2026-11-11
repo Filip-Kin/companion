@@ -1,6 +1,6 @@
 import type { JsonValue } from 'type-fest'
 import type z from 'zod'
-import { isCustomActionsConnectionId } from '@companion-app/shared/ConnectionId.js'
+import { isCustomActionsConnectionId, isCustomFeedbacksConnectionId } from '@companion-app/shared/ConnectionId.js'
 import type { CustomActionControlId, SomeControlId } from '@companion-app/shared/ControlId.js'
 import { diffObject } from '@companion-app/shared/Diff.js'
 import {
@@ -635,6 +635,18 @@ export class ControlCustomAction
 		const ids = new Set<string>()
 		for (const entity of this.entities.getAllEnabledEntities(false)) {
 			if (isCustomActionsConnectionId(entity.connectionId)) ids.add(entity.definitionId)
+		}
+		return ids
+	}
+
+	/**
+	 * Get the ids of the custom feedbacks this uses directly, as the conditions of its actions or its local variables
+	 */
+	getUsedCustomFeedbackIds(): Set<string> {
+		// A disabled use, or one inside a disabled group, isn't evaluated, so doesn't nest
+		const ids = new Set<string>()
+		for (const entity of this.entities.getAllEnabledEntities(false)) {
+			if (isCustomFeedbacksConnectionId(entity.connectionId)) ids.add(entity.definitionId)
 		}
 		return ids
 	}

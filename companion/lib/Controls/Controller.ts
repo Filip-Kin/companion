@@ -63,7 +63,7 @@ import { ControlButtonPageUp } from './ControlTypes/PageUp.js'
 import { ControlTrigger } from './ControlTypes/Triggers/Trigger.js'
 import { CustomActionCollections } from './CustomActionCollections.js'
 import { MAX_CUSTOM_ACTION_DEPTH } from './CustomActionRunFrame.js'
-import { analyseCustomActionCalls, type CustomActionCallAnalysis } from './CustomActions/CustomActionCalls.js'
+import { analyseCustomCalls, type CustomActionCallAnalysis } from './CustomActions/CustomActionCalls.js'
 import {
 	createCustomActionTrpcRouter,
 	pruneCustomActionOutputTargets,
@@ -202,6 +202,8 @@ export class ControlsController {
 
 		this.#controlEvents.on('customFeedbackDefinitionChanged', (controlId) => {
 			this.#publishCustomFeedbackDefinitions()
+			// How deeply the custom actions nest includes the custom feedbacks they use
+			this.#publishCustomActionDefinitions()
 			this.#deps.customFeedbackInstances.onCustomFeedbackChanged(controlId)
 		})
 	}
@@ -219,22 +221,10 @@ export class ControlsController {
 	 */
 	#publishCustomFeedbackDefinitions = debounceFn(
 		(): void => {
-			const customFeedbacks = new Map<string, ControlCustomFeedback>()
-			for (const control of this.#store.controls.values()) {
-				if (!(control instanceof ControlCustomFeedback)) continue
+			const { customFeedbacks, analysis } = this.#analyseCustomCalls()
 
-				const parsedId = ParseControlId(control.controlId)
-				if (parsedId?.type !== 'custom-feedback') continue
-
-				customFeedbacks.set(parsedId.customFeedbackId, control)
-			}
-
-			// Which custom feedbacks use each other, so that the uses which can never work can be shown as such
-			const analysis = analyseCustomActionCalls(
-				new Map([...customFeedbacks].map(([id, control]) => [id, control.getCalledCustomFeedbackIds()]))
-			)
 			for (const [id, control] of customFeedbacks) {
-				const callAnalysis = analysis.get(id)
+				const callAnalysis = analysis.customFeedbacks.get(id)
 				if (callAnalysis) control.setCallAnalysis(callAnalysis, describeUseProblem(customFeedbacks, callAnalysis))
 			}
 
@@ -253,6 +243,42 @@ export class ControlsController {
 		}
 	)
 
+	/**
+	 * Which custom actions and custom feedbacks call each other, so that the calls which can never run can be shown as
+	 * such. They are analysed together, as the depth of a custom action includes the custom feedbacks it uses
+	 */
+	#analyseCustomCalls(): {
+		customActions: Map<string, ControlCustomAction>
+		customFeedbacks: Map<string, ControlCustomFeedback>
+		analysis: ReturnType<typeof analyseCustomCalls>
+	} {
+		const customActions = new Map<string, ControlCustomAction>()
+		const customFeedbacks = new Map<string, ControlCustomFeedback>()
+		for (const control of this.#store.controls.values()) {
+			const parsedId = ParseControlId(control.controlId)
+			if (control instanceof ControlCustomAction && parsedId?.type === 'custom-action') {
+				customActions.set(parsedId.customActionId, control)
+			} else if (control instanceof ControlCustomFeedback && parsedId?.type === 'custom-feedback') {
+				customFeedbacks.set(parsedId.customFeedbackId, control)
+			}
+		}
+
+		const analysis = analyseCustomCalls(
+			new Map(
+				[...customActions].map(([id, control]) => [
+					id,
+					{
+						customActionIds: control.getCalledCustomActionIds(),
+						customFeedbackIds: control.getUsedCustomFeedbackIds(),
+					},
+				])
+			),
+			new Map([...customFeedbacks].map(([id, control]) => [id, control.getCalledCustomFeedbackIds()]))
+		)
+
+		return { customActions, customFeedbacks, analysis }
+	}
+
 	#cleanUnknownCustomActionCollectionIds(validCollectionIds: ReadonlySet<string>): void {
 		for (const control of this.#store.controls.values()) {
 			if (control instanceof ControlCustomAction) {
@@ -266,22 +292,10 @@ export class ControlsController {
 	 */
 	#publishCustomActionDefinitions = debounceFn(
 		(): void => {
-			const customActions = new Map<string, ControlCustomAction>()
-			for (const control of this.#store.controls.values()) {
-				if (!(control instanceof ControlCustomAction)) continue
+			const { customActions, analysis } = this.#analyseCustomCalls()
 
-				const parsedId = ParseControlId(control.controlId)
-				if (parsedId?.type !== 'custom-action') continue
-
-				customActions.set(parsedId.customActionId, control)
-			}
-
-			// Which custom actions call each other, so that the calls which can never run can be shown as such
-			const analysis = analyseCustomActionCalls(
-				new Map([...customActions].map(([id, control]) => [id, control.getCalledCustomActionIds()]))
-			)
 			for (const [id, control] of customActions) {
-				const callAnalysis = analysis.get(id)
+				const callAnalysis = analysis.customActions.get(id)
 				if (callAnalysis) control.setCallAnalysis(callAnalysis, describeCallProblem(customActions, callAnalysis))
 			}
 
@@ -1055,7 +1069,7 @@ function describeCallProblem(
 			: 'It calls itself. That call does nothing.'
 	}
 	if (analysis.tooDeep) {
-		return `Its calls to other custom actions are nested more than ${MAX_CUSTOM_ACTION_DEPTH} deep. The deepest do nothing.`
+		return `Its calls to other custom actions, with the custom feedbacks they use, are nested more than ${MAX_CUSTOM_ACTION_DEPTH} deep. The deepest do nothing.`
 	}
 	return null
 }
